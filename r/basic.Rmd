@@ -1,0 +1,127 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# UFC Fight Analysis
+
+```{r}
+library(readr)
+data <- read_csv("~/repos/ufc-fight-predictor/raw_data/data.csv")
+head(data)
+```
+```{r}
+colnames(data)
+```
+
+Lets compare winners and losers by the average number of takedowns landed
+
+```{r}
+get_winning_data <- function(x) {
+  i_r <- grep(paste0(
+    "R_",
+    x
+  ), colnames(data))
+  i_b <- grep(paste0(
+    "B_",
+    x
+  ), colnames(data))
+  
+  winning_d <- as.numeric(apply(data, 1, function (x) if (x[1] == "Red") return(x[i_r]) else return(x[i_b])))
+  losing_d <- as.numeric(apply(data, 1, function (x) if (x[1] == "Red") return(x[i_b]) else return(x[i_r])))
+
+  win_diff <- winning_d / losing_d
+  return(win_diff)
+}
+
+stat_names <- colnames(data)[10:145]
+stat_names <- substr(stat_names, 3, nchar(stat_names)) 
+stat_names <- unique(stat_names)
+stat_names <- stat_names[1:63]
+
+m <- matrix(0, dim(data)[1]*2, length(stat_names) + 1)
+i <- 0
+for (n in stat_names) {
+  i <- i + 1
+  if (i %in% c(55)) {
+    next
+  }
+  
+  win_d <- get_winning_data(n)
+  los_d <- 1/win_d
+  m[,i] <- c(win_d, los_d)
+  print(paste(i, n))
+}
+```
+
+
+```{r}
+losses <- numeric(dim(data)[1]) 
+wins <- losses + 1
+labels <- c(wins, losses)
+m[,i+1] <- labels
+
+df <- (as.data.frame(m))
+colnames(df) <- c(stat_names, "win")
+```
+
+```{r}
+library(randomForest)
+
+set.seed(123)
+
+# create dataset
+df_mini <- subset(df, select=-c(1,2,3,55,56,57,58,59,60,61,62,63))
+cols <- colnames(df_mini)
+impute.median <- function(x) replace(x, is.na(x) | is.nan(x) | is.infinite(x), median(x[!is.na(x) & !is.nan(x) & !is.infinite(x)]))
+df_mini <- apply(df_mini, 2, impute.median)
+rows <- sample(nrow(df_mini))
+df_mini <- as.data.frame(df_mini[rows, ])
+df_mini <- as.data.frame(sapply( df_mini, as.numeric ))
+colnames(df_mini) <- cols
+df_mini$win[df_mini$win == 1] <- "W"
+df_mini$win[df_mini$win == 0] <- "L"
+df_mini$win <- as.factor(df_mini$win)
+
+# train and test samples
+set.seed(123)
+smp_size <- floor(0.8 * nrow(df_mini))
+train_ind <- sample(seq_len(nrow(df_mini)), size = smp_size)
+train <- df_mini[train_ind, ]
+test <- df_mini[-train_ind, ]
+
+model1 <- randomForest(
+  win ~ .,
+  data=train
+)
+```
+
+
+```{r}
+library(caret)
+library(ROCR)
+
+pred <- predict(model1, test, type = "prob")
+pred <- prediction(pred[,2], test$win)
+
+# Precision-Recall Graph
+# rec.perf <- performance(pred, measure = "rec")
+# prec.perf <- performance(pred, measure = "prec")
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, main="ROC Curve") 
+
+# Reciever Operating Characteristic
+# Calculate AUC and print to screen
+auc.perf <- performance(pred, measure = "auc")
+print(paste("AUC: ", auc.perf@y.values[[1]][1]))
+
+
+rf_imp <- varImp(model1, scale = FALSE)
+rf_imp$stat <- rownames(rf_imp)
+tail(rf_imp[order(rf_imp$Overall), ])
+```
+
+
+
+
+
